@@ -2,8 +2,8 @@
 
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
+import Image from "next/image"
 import { useStellar } from "@/components/web3-provider"
-import { Coins } from "lucide-react"
 
 export function Header() {
   const { address, isConnected, connect, disconnect } = useStellar()
@@ -13,8 +13,14 @@ export function Header() {
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
-              <Coins className="h-6 w-6 text-primary-foreground" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl overflow-hidden">
+              <Image 
+                src="/joint-save.jpg" 
+                alt="JointSave Logo" 
+                width={40} 
+                height={40}
+                className="object-cover"
+              />
             </div>
             <span className="text-xl font-bold">JointSave</span>
           </Link>

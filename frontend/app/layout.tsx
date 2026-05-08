@@ -11,6 +11,22 @@ export const metadata: Metadata = {
   title: "JointSave - Community Savings on Stellar",
   description:
     "Save together, grow together. Decentralized community savings built on the Stellar blockchain.",
+  icons: {
+    icon: "/joint-save.jpg",
+    shortcut: "/joint-save.jpg",
+    apple: "/joint-save.jpg",
+  },
+  openGraph: {
+    title: "JointSave - Community Savings on Stellar",
+    description: "Save together, grow together. Decentralized community savings built on the Stellar blockchain.",
+    images: ["/joint-save.jpg"],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "JointSave - Community Savings on Stellar",
+    description: "Save together, grow together. Decentralized community savings built on the Stellar blockchain.",
+    images: ["/joint-save.jpg"],
+  },
 }
 
 export default function RootLayout({
