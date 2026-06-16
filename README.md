@@ -224,6 +224,10 @@ We welcome contributions from the community! Here's how you can help:
 - **[Deployment Guide](smartcontract/scripts/deploy.sh)** – How to deploy contracts
 - **[Frontend Setup](frontend/README.md)** – Development environment setup
 
+## Security
+
+Please refer to [SECURITY.md](SECURITY.md) for our security policy, in-scope components, known limitations, and instructions on how to report vulnerabilities.
+
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/Sendi0011/Joint_Save/issues)
