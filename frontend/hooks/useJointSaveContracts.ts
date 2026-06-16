@@ -674,6 +674,106 @@ export async function fetchTargetState(
   }
 }
 
+// ── On-chain event fetching ───────────────────────────────────────────────────
+
+export interface ActivityEvent {
+  id: string
+  activity_type: string
+  user_address: string | null
+  amount: number | null
+  description: string | null
+  created_at: string
+  tx_hash: string | null
+  source: "onchain" | "offchain"
+}
+
+/**
+ * Fetch contract events from the RPC and map them to ActivityEvent rows.
+ * Topics emitted by contracts: "deposit", "payout", "withdraw", "complete",
+ * "unlocked", "refunded", "yield".
+ */
+export async function fetchContractEvents(
+  contractId: string,
+  startLedger: number
+): Promise<ActivityEvent[]> {
+  const server = getRpc()
+  const response = await server.getEvents({
+    startLedger,
+    filters: [
+      {
+        type: "contract",
+        contractIds: [contractId],
+      },
+    ],
+    limit: 100,
+  })
+
+  const events: ActivityEvent[] = []
+
+  for (const ev of response.events) {
+    const topics = ev.topic
+    if (!topics.length) continue
+
+    // First topic is always the event name symbol
+    const topicName =
+      topics[0].switch().name === "scvSymbol"
+        ? topics[0].sym().toString()
+        : null
+    if (!topicName) continue
+
+    // Second topic (optional) is the address
+    let userAddress: string | null = null
+    if (topics[1]?.switch().name === "scvAddress") {
+      try {
+        userAddress = Address.fromScVal(topics[1]).toString()
+      } catch {}
+    }
+
+    // Value is the amount (i128) for deposit/payout/withdraw
+    let amount: number | null = null
+    try {
+      const val = ev.value
+      const sw = val.switch().name
+      if (sw === "scvI128" || sw === "scvU128" || sw === "scvU64" || sw === "scvI64") {
+        amount = Number(scValToBigInt(val)) / 10_000_000
+      }
+    } catch {}
+
+    const typeMap: Record<string, string> = {
+      deposit: "deposit",
+      payout: "payout",
+      withdraw: "withdraw",
+      complete: "complete",
+      unlocked: "complete",
+      refunded: "withdraw",
+      yield: "yield",
+    }
+
+    const activity_type = typeMap[topicName]
+    if (!activity_type) continue
+
+    // Derive a stable id from txHash + topic
+    const id = `${ev.txHash}-${topicName}`
+
+    events.push({
+      id,
+      activity_type,
+      user_address: userAddress,
+      amount,
+      description: null,
+      // Soroban events don't carry a timestamp; use ledger close time if available
+      created_at: ev.ledgerClosedAt ?? new Date(0).toISOString(),
+      tx_hash: ev.txHash,
+      source: "onchain",
+    })
+  }
+
+  // Most-recent first
+  return events.sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+}
+
 export async function fetchFlexibleState(
   contractId: string,
   userAddress?: string
