@@ -211,3 +211,7 @@ impl RotationalPool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests;
+
