@@ -6,6 +6,7 @@ import Image from "next/image"
 import { useStellar } from "@/components/web3-provider"
 import { Menu } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { ThemeToggle } from "@/components/ui/theme-toggle"
 
 export function DashboardHeader() {
   const { address, disconnect } = useStellar()
@@ -28,6 +29,7 @@ export function DashboardHeader() {
           </Link>
 
           <div className="flex items-center gap-4">
+            <ThemeToggle />
             <Button onClick={disconnect} variant="outline" className="hidden sm:flex">
               {address?.slice(0, 6)}...{address?.slice(-4)}
             </Button>
