@@ -94,3 +94,43 @@ fn test_happy_path() {
     // Deposited flags reset
     assert!(!client.has_deposited(&member_a));
 }
+
+#[test]
+#[should_panic(expected = "not a member")]
+fn test_non_member_deposit_rejection() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, RotationalPool);
+    let client = RotationalPoolClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_address = token_contract.address();
+    let token_client = token::StellarAssetClient::new(&env, &token_address);
+
+    let treasury = Address::generate(&env);
+    let member_a = Address::generate(&env);
+    let member_b = Address::generate(&env);
+    let non_member = Address::generate(&env);
+
+    let mut members = Vec::new(&env);
+    members.push_back(member_a.clone());
+    members.push_back(member_b.clone());
+
+    client.initialize(
+        &token_address,
+        &members,
+        &100i128,
+        &100u64,
+        &0u32,
+        &0u32,
+        &treasury,
+    );
+
+    token_client.mint(&non_member, &100i128);
+
+    // This should panic because non_member is not in members list
+    client.deposit(&non_member);
+}
+
