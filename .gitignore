@@ -35,3 +35,7 @@ yarn-error.log*
 
 # Vercel
 .vercel
+
+CLAUDE.md
+plan.md
+.playwright-mcp
