@@ -39,9 +39,9 @@ async function fetchProfileStats(address: string): Promise<ProfileStats> {
     .eq("user_address", lower)
 
   const activityList = activity || []
-  const depositCount = activityList.filter((a) => a.activity_type === "deposit").length
+  const depositCount = activityList.filter((a: any) => a.activity_type === "deposit").length
   const payoutCount = activityList.filter(
-    (a) => a.activity_type === "payout" || a.activity_type === "withdraw"
+    (a: any) => a.activity_type === "payout" || a.activity_type === "withdraw"
   ).length
 
   // Fetch live on-chain balances in parallel

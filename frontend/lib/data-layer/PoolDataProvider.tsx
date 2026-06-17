@@ -14,6 +14,8 @@ import {
   fetchRotationalState,
   fetchTargetState,
   fetchFlexibleState,
+  fetchIsPaused,
+  fetchPoolAdmin,
   type RotationalPoolState,
   type TargetPoolState,
   type FlexiblePoolState,
@@ -24,6 +26,8 @@ import {
 export interface PoolStateCache {
   db: any | null
   onchain: RotationalPoolState | TargetPoolState | FlexiblePoolState | null
+  isPaused: boolean
+  poolAdmin: string | null
   lastFetched: number
   isLoading: boolean
   isStale: boolean
@@ -101,7 +105,7 @@ export function PoolDataProvider({ children }: { children: ReactNode }) {
 
   const setEntry = (contractId: string, patch: Partial<PoolStateCache>) => {
     const prev = cacheRef.current[contractId] ?? {
-      db: null, onchain: null, lastFetched: 0,
+      db: null, onchain: null, isPaused: false, poolAdmin: null, lastFetched: 0,
       isLoading: false, isStale: true, error: null,
     }
     cacheRef.current[contractId] = { ...prev, ...patch }
@@ -117,6 +121,8 @@ export function PoolDataProvider({ children }: { children: ReactNode }) {
       cacheRef.current[contractId] = {
         db: dbData,
         onchain: null,
+        isPaused: false,
+        poolAdmin: null,
         lastFetched: 0, // stale intentionally so the hook triggers a background refresh
         isLoading: false,
         isStale: true,
@@ -168,24 +174,38 @@ export function PoolDataProvider({ children }: { children: ReactNode }) {
 
         // ── B: Fetch on-chain state ─────────────────────────────────────────
         let onchainState = null
+        let isPaused = false
+        let poolAdmin: string | null = null
         const contractAddr: string = dbData?.contract_address ?? ""
         const isPending = !contractAddr || contractAddr === "pending_deployment"
 
         if (!isPending) {
           const userAddress = addressRef.current || undefined
+          const promises: Promise<any>[] = []
+
           if (dbData.type === "rotational") {
-            onchainState = await fetchRotationalState(contractAddr)
+            promises.push(fetchRotationalState(contractAddr))
           } else if (dbData.type === "target") {
-            onchainState = await fetchTargetState(contractAddr, userAddress)
+            promises.push(fetchTargetState(contractAddr, userAddress))
           } else if (dbData.type === "flexible") {
-            onchainState = await fetchFlexibleState(contractAddr, userAddress)
+            promises.push(fetchFlexibleState(contractAddr, userAddress))
           }
+
+          promises.push(fetchIsPaused(contractAddr))
+          promises.push(fetchPoolAdmin(contractAddr))
+
+          const [stateVal, pausedVal, adminVal] = await Promise.all(promises)
+          onchainState = stateVal
+          isPaused = pausedVal
+          poolAdmin = adminVal
         }
 
         const fetchTime = Date.now()
         cacheRef.current[contractId] = {
           db: dbData,
           onchain: onchainState,
+          isPaused,
+          poolAdmin,
           lastFetched: fetchTime,
           isLoading: false,
           isStale: false,
@@ -427,7 +447,7 @@ export function usePoolData(contractId: string) {
 
   // Handle missing / pending pools gracefully
   if (!contractId || contractId === "pending_deployment") {
-    return { data: null, isLoading: false, isStale: false, error: null, refetch: async () => {} }
+    return { data: null, isLoading: false, isStale: false, isPaused: false, poolAdmin: null, error: null, refetch: async () => {} }
   }
 
   const entry = getCache(contractId)
@@ -438,6 +458,8 @@ export function usePoolData(contractId: string) {
     data: entry ? { db: entry.db, onchain: entry.onchain } : null,
     isLoading: entry ? entry.isLoading : true,
     isStale: entry ? (entry.isStale || isStale) : false,
+    isPaused: entry ? entry.isPaused : false,
+    poolAdmin: entry ? entry.poolAdmin : null,
     error: entry ? entry.error : null,
     refetch,
   }

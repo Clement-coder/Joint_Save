@@ -3,7 +3,7 @@
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Calendar, TrendingUp, Users, Clock, Loader2, RefreshCw } from "lucide-react"
+import { Calendar, TrendingUp, Users, Clock, Loader2, RefreshCw, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { motion } from "framer-motion"
 import {
@@ -28,7 +28,7 @@ export function GroupDetails({ groupId, contractAddress }: GroupDetailsProps) {
       ? contractAddress
       : groupId
 
-  const { data, isLoading, isStale, error, refetch } = usePoolData(cacheKey)
+  const { data, isLoading, isStale, isPaused, error, refetch } = usePoolData(cacheKey)
 
   const group = data?.db ?? null
   const onchainState = data?.onchain ?? null
@@ -139,6 +139,13 @@ export function GroupDetails({ groupId, contractAddress }: GroupDetailsProps) {
         </div>
 
         {group.description && <p className="text-muted-foreground mb-6">{group.description}</p>}
+
+        {isPaused && !isPending(group.contract_address) && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive mb-4 text-sm font-medium">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            <span>⚠️ Pool Paused — All deposits and withdrawals are currently disabled.</span>
+          </div>
+        )}
 
         {isPending(group.contract_address) && (
           <div className="p-3 rounded-lg bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 mb-4 text-sm">

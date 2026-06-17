@@ -1,12 +1,16 @@
 "use client"
 
+import { useState, useEffect, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ArrowUpRight, ArrowDownLeft, UserPlus, Settings, Loader2, ExternalLink, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { ArrowUpRight, ArrowDownLeft, UserPlus, Settings, Loader2, ExternalLink, RefreshCw } from "lucide-react"
 import { usePoolData } from "@/lib/data-layer/PoolDataProvider"
+import { fetchContractEvents, ActivityEvent } from "@/hooks/useJointSaveContracts"
 
-interface Activity {
+const PAGE_SIZE = 20
+
+interface SupabaseActivity {
   id: string
   activity_type: string
   user_address: string | null
@@ -20,24 +24,70 @@ interface GroupActivityProps {
   groupId: string
   /** Contract address when known — used as the shared cache key */
   contractAddress?: string
+  startLedger?: number
 }
 
-export function GroupActivity({ groupId, contractAddress }: GroupActivityProps) {
-  // All three sibling components (GroupDetails, GroupMembers, GroupActivity)
-  // share the SAME cache key, so only 1 RPC call fires regardless of which
-  // component mounts first. The setInterval polling is now centralised in
-  // PoolDataProvider — no duplicate loops needed here.
+type Activity = ActivityEvent
+
+function toActivity(a: SupabaseActivity): Activity {
+  return { ...a, source: "offchain" as const }
+}
+
+function mergeAndDedupe(onchain: Activity[], offchain: Activity[]): Activity[] {
+  const seen = new Set<string>()
+  const merged: Activity[] = []
+  for (const a of [...onchain, ...offchain]) {
+    const key = a.tx_hash ?? a.id
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(a)
+  }
+  return merged.sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+}
+
+export function GroupActivity({
+  groupId,
+  contractAddress,
+  startLedger = 0,
+}: GroupActivityProps) {
   const cacheKey =
     contractAddress && contractAddress !== "pending_deployment"
       ? contractAddress
       : groupId
 
-  const { data, isLoading, refetch } = usePoolData(cacheKey)
+  const { data, isLoading, refetch: refetchCache } = usePoolData(cacheKey)
+  const [onchainActivities, setOnchainActivities] = useState<Activity[]>([])
+  const [loadingOnchain, setLoadingOnchain] = useState(false)
+  const [page, setPage] = useState(1)
 
-  const activities: Activity[] = (data?.db?.pool_activity ?? []).sort(
-    (a: Activity, b: Activity) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  )
+  const fetchOnchain = useCallback(async () => {
+    if (!contractAddress || contractAddress === "pending_deployment") return
+    try {
+      setLoadingOnchain(true)
+      const events = await fetchContractEvents(contractAddress, startLedger)
+      setOnchainActivities(events)
+    } catch (err) {
+      console.error("Failed to fetch onchain events:", err)
+    } finally {
+      setLoadingOnchain(false)
+    }
+  }, [contractAddress, startLedger])
+
+  useEffect(() => {
+    fetchOnchain()
+  }, [fetchOnchain])
+
+  const refetch = useCallback(async () => {
+    await Promise.all([
+      refetchCache(),
+      fetchOnchain(),
+    ])
+  }, [refetchCache, fetchOnchain])
+
+  const dbActivities = (data?.db?.pool_activity ?? []).map(toActivity)
+  const allActivities = mergeAndDedupe(onchainActivities, dbActivities)
 
   const formatAddress = (address: string | null) => {
     if (!address) return "System"
@@ -47,39 +97,27 @@ export function GroupActivity({ groupId, contractAddress }: GroupActivityProps) 
   const formatTime = (dateString: string) => {
     try {
       const date = new Date(dateString)
-      if (isNaN(date.getTime())) return "Invalid date"
-
-      const now = new Date()
-      const diffMs = now.getTime() - date.getTime()
+      if (isNaN(date.getTime())) return "Unknown"
+      const diffMs = Date.now() - date.getTime()
       if (diffMs < 0) return "Just now"
-
       const diffMins = Math.floor(diffMs / 60000)
       const diffHours = Math.floor(diffMins / 60)
       const diffDays = Math.floor(diffHours / 24)
-
       if (diffMins < 1) return "Just now"
       if (diffMins < 60) return `${diffMins}m ago`
       if (diffHours < 24) return `${diffHours}h ago`
       if (diffDays < 7) return `${diffDays}d ago`
 
-      return date.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
+      return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
     } catch {
-      return "Unknown date"
+      return "Unknown"
     }
   }
 
-  const getBlockExplorerUrl = (txHash: string | null) => {
-    if (!txHash) return null
-    return `https://stellar.expert/explorer/testnet/tx/${txHash}`
-  }
+  const visible = allActivities.slice(0, page * PAGE_SIZE)
+  const hasMore = visible.length < allActivities.length
 
-  if (isLoading && activities.length === 0) {
+  if (isLoading && allActivities.length === 0) {
     return (
       <Card className="p-6">
         <div className="flex items-center justify-center py-8">
@@ -93,81 +131,115 @@ export function GroupActivity({ groupId, contractAddress }: GroupActivityProps) 
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold">Recent Activity</h3>
-        {/* Refresh delegates to the provider's centralised refetch — no
-            local interval or independent fetch logic required. */}
         <Button
           variant="ghost"
           size="sm"
           onClick={refetch}
-          disabled={isLoading}
+          disabled={isLoading || loadingOnchain}
           className="h-8 w-8 p-0"
         >
-          <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+          <RefreshCw className={`h-4 w-4 ${isLoading || loadingOnchain ? "animate-spin" : ""}`} />
         </Button>
       </div>
 
-      {activities.length === 0 ? (
+      {allActivities.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-4">No activity yet</p>
       ) : (
-        <div className="space-y-4">
-          {activities.map((activity) => (
-            <div key={activity.id} className="flex items-start gap-4 pb-4 border-b border-border last:border-0 last:pb-0">
+        <>
+          <div className="space-y-4">
+            {visible.map((activity: Activity) => (
               <div
-                className={`flex h-10 w-10 items-center justify-center rounded-lg flex-shrink-0 ${
-                  activity.activity_type === "deposit"
-                    ? "bg-primary/10"
-                    : activity.activity_type === "payout"
-                    ? "bg-accent/10"
-                    : "bg-muted"
-                }`}
+                key={activity.id}
+                className="flex items-start gap-4 pb-4 border-b border-border last:border-0 last:pb-0"
               >
-                {activity.activity_type === "deposit" && <ArrowUpRight className="h-5 w-5 text-primary" />}
-                {activity.activity_type === "payout" && <ArrowDownLeft className="h-5 w-5 text-accent" />}
-                {activity.activity_type === "member_joined" && <UserPlus className="h-5 w-5 text-muted-foreground" />}
-                {!["deposit", "payout", "member_joined"].includes(activity.activity_type) && (
-                  <Settings className="h-5 w-5 text-muted-foreground" />
-                )}
-              </div>
-
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <p className="font-medium text-sm capitalize">
-                    {activity.activity_type === "deposit" && "Deposit"}
-                    {activity.activity_type === "payout" && "Payout"}
-                    {activity.activity_type === "member_joined" && "Member Joined"}
-                    {activity.activity_type === "pool_created" && "Pool Created"}
-                    {!["deposit", "payout", "member_joined", "pool_created"].includes(activity.activity_type) &&
-                      activity.activity_type}
-                  </p>
-                  {activity.amount && (
-                    <Badge variant="secondary">{activity.amount.toFixed(2)} XLM</Badge>
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg flex-shrink-0 ${
+                    activity.activity_type === "deposit"
+                      ? "bg-primary/10"
+                      : activity.activity_type === "payout"
+                      ? "bg-accent/10"
+                      : "bg-muted"
+                  }`}
+                >
+                  {activity.activity_type === "deposit" && (
+                    <ArrowUpRight className="h-5 w-5 text-primary" />
+                  )}
+                  {activity.activity_type === "payout" && (
+                    <ArrowDownLeft className="h-5 w-5 text-accent" />
+                  )}
+                  {activity.activity_type === "member_joined" && (
+                    <UserPlus className="h-5 w-5 text-muted-foreground" />
+                  )}
+                  {!["deposit", "payout", "member_joined"].includes(activity.activity_type) && (
+                    <Settings className="h-5 w-5 text-muted-foreground" />
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {formatAddress(activity.user_address)} • {formatTime(activity.created_at)}
-                </p>
-                {activity.description && (
-                  <p className="text-xs text-muted-foreground mt-1">{activity.description}</p>
-                )}
-                {activity.tx_hash ? (
-                  getBlockExplorerUrl(activity.tx_hash) && (
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <p className="font-medium text-sm capitalize">
+                      {({
+                        deposit: "Deposit",
+                        payout: "Payout",
+                        withdraw: "Withdraw",
+                        complete: "Pool Complete",
+                        member_joined: "Member Joined",
+                        pool_created: "Pool Created",
+                        yield: "Yield Distributed",
+                      } as Record<string, string>)[activity.activity_type] ?? activity.activity_type}
+                    </p>
+                    {activity.amount != null && (
+                      <Badge variant="secondary">{activity.amount.toFixed(2)} XLM</Badge>
+                    )}
+                    <Badge
+                      variant="outline"
+                      className={`text-xs ${
+                        activity.source === "onchain"
+                          ? "border-blue-400 text-blue-600"
+                          : "border-gray-300 text-gray-500"
+                      }`}
+                    >
+                      {activity.source === "onchain" ? "🔗 on-chain" : "📝 off-chain"}
+                    </Badge>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    {formatAddress(activity.user_address)} • {formatTime(activity.created_at)}
+                  </p>
+
+                  {activity.description && (
+                    <p className="text-xs text-muted-foreground mt-1">{activity.description}</p>
+                  )}
+
+                  {activity.tx_hash ? (
                     <a
-                      href={getBlockExplorerUrl(activity.tx_hash)!}
+                      href={`https://stellar.expert/explorer/testnet/tx/${activity.tx_hash}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-2"
+                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
                     >
-                      View on Stellar Expert
+                      {activity.tx_hash.slice(0, 8)}…{activity.tx_hash.slice(-6)}
                       <ExternalLink className="h-3 w-3" />
                     </a>
-                  )
-                ) : (
-                  <p className="text-xs text-muted-foreground mt-2">No transaction hash</p>
-                )}
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-1">No tx hash</p>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+
+          {hasMore && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full mt-4"
+              onClick={() => setPage((p: number) => p + 1)}
+            >
+              Load more
+            </Button>
+          )}
+        </>
       )}
     </Card>
   )
