@@ -1,6 +1,6 @@
 "use client"
 
-import { use, useEffect, useState } from "react"
+import { use, useCallback, useEffect, useState } from "react"
 import { DashboardHeader } from "@/components/dashboard/dashboard-header"
 import { GroupDetails } from "@/components/group/group-details"
 import { GroupMembers } from "@/components/group/group-members"
@@ -9,6 +9,7 @@ import { GroupActions } from "@/components/group/group-actions"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { fetchIsPaused } from "@/hooks/useJointSaveContracts"
 
 interface Pool {
   id: string
@@ -18,10 +19,13 @@ interface Pool {
   token_address: string
 }
 
+const isPendingAddress = (addr: string) => !addr || addr === "pending_deployment"
+
 export default function GroupPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const [pool, setPool] = useState<Pool | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isPaused, setIsPaused] = useState(false)
 
   useEffect(() => {
     fetch(`/api/pools?id=${id}`)
@@ -35,6 +39,16 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
         setLoading(false)
       })
   }, [id])
+
+  const refreshPauseState = useCallback(async () => {
+    if (!pool || isPendingAddress(pool.contract_address)) return
+    try {
+      const paused = await fetchIsPaused(pool.contract_address)
+      setIsPaused(paused)
+    } catch {}
+  }, [pool])
+
+  useEffect(() => { refreshPauseState() }, [refreshPauseState])
 
   if (loading) return <div>Loading...</div>
   if (!pool) return <div>Pool not found</div>
@@ -56,11 +70,13 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
             <GroupActivity groupId={id} />
           </div>
           <div className="space-y-6">
-            <GroupActions 
+            <GroupActions
               groupId={id}
               poolAddress={pool.contract_address}
               poolType={pool.type}
               tokenAddress={pool.token_address}
+              isPaused={isPaused}
+              onPauseChange={refreshPauseState}
             />
             <GroupMembers groupId={id} />
           </div>

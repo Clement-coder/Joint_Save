@@ -5,12 +5,13 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Loader2, ArrowUpRight, ArrowDownLeft, AlertCircle, CheckCircle2 } from "lucide-react"
+import { Loader2, ArrowUpRight, ArrowDownLeft, AlertCircle, CheckCircle2, ShieldOff, ShieldCheck } from "lucide-react"
 import { useStellar } from "@/components/web3-provider"
 import {
   useRotationalDeposit, useTriggerPayout,
   useTargetContribute, useTargetWithdraw, useTargetRefund,
   useFlexibleDeposit, useFlexibleWithdraw,
+  usePausePool, useUnpausePool,
 } from "@/hooks/useJointSaveContracts"
 
 interface GroupActionsProps {
@@ -18,6 +19,8 @@ interface GroupActionsProps {
   poolAddress: string
   poolType: "rotational" | "target" | "flexible"
   tokenAddress: string
+  isPaused?: boolean
+  onPauseChange?: () => void
 }
 
 async function logActivity(poolId: string, type: string, userAddress: string, amount: string | null, txHash: string) {
@@ -33,7 +36,7 @@ async function logActivity(poolId: string, type: string, userAddress: string, am
   } catch {}
 }
 
-export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsProps) {
+export function GroupActions({ groupId, poolAddress, poolType, isPaused = false, onPauseChange }: GroupActionsProps) {
   const { address } = useStellar()
   const [depositAmount, setDepositAmount] = useState("")
   const [withdrawAmount, setWithdrawAmount] = useState("")
@@ -47,6 +50,8 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
   const targetRefund = useTargetRefund(poolAddress)
   const flexibleDeposit = useFlexibleDeposit(poolAddress, depositAmount)
   const flexibleWithdraw = useFlexibleWithdraw(poolAddress, withdrawAmount)
+  const pausePool = usePausePool(poolAddress)
+  const unpausePool = useUnpausePool(poolAddress)
 
   const isPending = !poolAddress || poolAddress === "pending_deployment"
 
@@ -54,6 +59,7 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
     setError(""); setSuccessMsg("")
     if (!address) return setError("Please connect your wallet first")
     if (isPending) return setError("Contract not yet deployed.")
+    if (isPaused) return setError("Pool is paused. Deposits are disabled.")
     try {
       let txHash: string | undefined
       if (poolType === "rotational") txHash = await rotationalDeposit.deposit()
@@ -72,6 +78,7 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
     setError(""); setSuccessMsg("")
     if (!address) return setError("Please connect your wallet first")
     if (isPending) return setError("Contract not yet deployed.")
+    if (isPaused) return setError("Pool is paused. Withdrawals are disabled.")
     try {
       let txHash: string | undefined
       if (poolType === "target") txHash = await targetWithdraw.withdraw()
@@ -89,6 +96,7 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
     setError(""); setSuccessMsg("")
     if (!address) return setError("Please connect your wallet first")
     if (isPending) return setError("Contract not yet deployed.")
+    if (isPaused) return setError("Pool is paused. Payouts are disabled.")
     try {
       const txHash = await triggerPayout.trigger()
       if (txHash) {
@@ -111,6 +119,28 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
     } catch (e: any) { setError(e.message || "Transaction failed") }
   }
 
+  const handlePause = async () => {
+    setError(""); setSuccessMsg("")
+    if (!address) return setError("Please connect your wallet first")
+    if (isPending) return setError("Contract not yet deployed.")
+    try {
+      await pausePool.pause()
+      setSuccessMsg("Pool paused successfully.")
+      onPauseChange?.()
+    } catch (e: any) { setError(e.message || "Transaction failed") }
+  }
+
+  const handleUnpause = async () => {
+    setError(""); setSuccessMsg("")
+    if (!address) return setError("Please connect your wallet first")
+    if (isPending) return setError("Contract not yet deployed.")
+    try {
+      await unpausePool.unpause()
+      setSuccessMsg("Pool unpaused successfully.")
+      onPauseChange?.()
+    } catch (e: any) { setError(e.message || "Transaction failed") }
+  }
+
   const isDepositLoading =
     poolType === "rotational" ? rotationalDeposit.isLoading
     : poolType === "target" ? targetContribute.isLoading
@@ -120,6 +150,7 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
   const isRotational = poolType === "rotational"
   const isTarget = poolType === "target"
   const isFlexible = poolType === "flexible"
+  const actionsDisabled = isPaused || isPending || !address
 
   return (
     <Card className="p-6">
@@ -139,7 +170,13 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
         </div>
       )}
 
-      {isPending && (
+      {isPaused && (
+        <div className="p-3 rounded-lg bg-destructive/10 text-destructive mb-4 text-sm font-medium">
+          ⚠️ Pool is paused — all transactions are disabled.
+        </div>
+      )}
+
+      {isPending && !isPaused && (
         <div className="p-3 rounded-lg bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 mb-4 text-sm">
           Contract pending deployment.
         </div>
@@ -154,7 +191,7 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
           {!isRotational && (
             <Input id="deposit" type="number" step="0.01" placeholder="100"
               value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)}
-              disabled={isDepositLoading} />
+              disabled={isDepositLoading || actionsDisabled} />
           )}
           <p className="text-xs text-muted-foreground">
             {isRotational && "Deposit the fixed pool amount. Same for all members."}
@@ -162,7 +199,7 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
             {isFlexible && "Deposit any amount (must meet minimum). Withdraw anytime."}
           </p>
           <Button className="w-full bg-primary hover:bg-primary/90" onClick={handleDeposit}
-            disabled={isDepositLoading || !address || isPending}>
+            disabled={isDepositLoading || actionsDisabled}>
             {isDepositLoading
               ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing...</>
               : <><ArrowUpRight className="mr-2 h-4 w-4" />{isTarget ? "Contribute" : "Deposit"}</>}
@@ -176,14 +213,14 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
             {isFlexible && (
               <Input id="withdraw" type="number" step="0.01" placeholder="100"
                 value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)}
-                disabled={isWithdrawLoading} />
+                disabled={isWithdrawLoading || actionsDisabled} />
             )}
             <p className="text-xs text-muted-foreground">
               {isTarget && "Withdraw after target reached. Exit fee deducted."}
               {isFlexible && "Withdraw anytime. Exit fee will be deducted."}
             </p>
             <Button variant="outline" className="w-full bg-transparent" onClick={handleWithdraw}
-              disabled={isWithdrawLoading || !address || isPending || (isFlexible && !withdrawAmount)}>
+              disabled={isWithdrawLoading || actionsDisabled || (isFlexible && !withdrawAmount)}>
               {isWithdrawLoading
                 ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing...</>
                 : <><ArrowDownLeft className="mr-2 h-4 w-4" />Withdraw</>}
@@ -207,11 +244,35 @@ export function GroupActions({ groupId, poolAddress, poolType }: GroupActionsPro
               Rotational Pool: Payouts are triggered when the round time is reached. You earn a relayer fee for triggering.
             </p>
             <Button variant="outline" className="w-full bg-transparent" onClick={handleTriggerPayout}
-              disabled={triggerPayout.isLoading || !address || isPending}>
+              disabled={triggerPayout.isLoading || actionsDisabled}>
               {triggerPayout.isLoading
                 ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing...</>
                 : <><ArrowDownLeft className="mr-2 h-4 w-4" />Trigger Payout</>}
             </Button>
+          </div>
+        )}
+
+        {/* Admin: Pause / Unpause */}
+        {!isPending && (
+          <div className="border-t border-border pt-6 space-y-3">
+            <p className="text-xs text-muted-foreground font-medium">Admin Controls</p>
+            <p className="text-xs text-muted-foreground">
+              Only the pool admin can pause or unpause. Pausing disables all deposits and withdrawals.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1 bg-transparent text-destructive border-destructive/50 hover:bg-destructive/10"
+                onClick={handlePause} disabled={pausePool.isLoading || !address || isPending || isPaused}>
+                {pausePool.isLoading
+                  ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Pausing...</>
+                  : <><ShieldOff className="mr-2 h-4 w-4" />Pause Pool</>}
+              </Button>
+              <Button variant="outline" className="flex-1 bg-transparent text-green-600 border-green-600/50 hover:bg-green-600/10"
+                onClick={handleUnpause} disabled={unpausePool.isLoading || !address || isPending || !isPaused}>
+                {unpausePool.isLoading
+                  ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Unpausing...</>
+                  : <><ShieldCheck className="mr-2 h-4 w-4" />Unpause Pool</>}
+              </Button>
+            </div>
           </div>
         )}
 
