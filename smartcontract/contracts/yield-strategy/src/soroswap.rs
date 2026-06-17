@@ -1,8 +1,8 @@
-use soroban_sdk::{token, Address, Env, Vec};
+use soroban_sdk::{symbol_short, Address, Env, IntoVal};
 
-/// Add liquidity to a Soroswap pair.
-/// Returns the LP tokens received (estimated as the minimum of the two amounts).
-/// In a real deployment the router would be called via `invoke_contract`.
+/// Single-asset deposit into Soroswap via the router's `add_liq` entry point.
+/// `amount_b = 0` signals a one-sided deposit.
+/// Funds must already be in this contract before calling.
 pub fn add_liquidity(
     env: &Env,
     router: &Address,
@@ -12,35 +12,23 @@ pub fn add_liquidity(
     amount_b: i128,
     to: &Address,
 ) -> i128 {
-    // Transfer token_a from caller (the strategy contract) to router
-    let client_a = token::Client::new(env, token_a);
-    client_a.transfer(&env.current_contract_address(), router, &amount_a);
-
-    // Transfer token_b from caller to router
-    if amount_b > 0 {
-        let client_b = token::Client::new(env, token_b);
-        client_b.transfer(&env.current_contract_address(), router, &amount_b);
-    }
-
-    // Invoke router add_liquidity — placeholder inter-contract call pattern
-    let _: Vec<soroban_sdk::Val> = env.invoke_contract(
+    let _lp: i128 = env.invoke_contract(
         router,
-        &soroban_sdk::symbol_short!("add_liq"),
+        &symbol_short!("add_liq"),
         soroban_sdk::vec![
             env,
-            soroban_sdk::IntoVal::into_val(token_a, env),
-            soroban_sdk::IntoVal::into_val(token_b, env),
-            soroban_sdk::IntoVal::into_val(&amount_a, env),
-            soroban_sdk::IntoVal::into_val(&amount_b, env),
-            soroban_sdk::IntoVal::into_val(to, env),
+            token_a.into_val(env),
+            token_b.into_val(env),
+            amount_a.into_val(env),
+            amount_b.into_val(env),
+            to.into_val(env),
         ],
     );
-
-    // Return deployed principal (amount_a represents our asset stake)
     amount_a
 }
 
-/// Remove liquidity and return proceeds to `to`.
+/// Withdraw `lp_amount` from the Soroswap pair back to `to`.
+/// Returns the recovered token_a amount.
 pub fn remove_liquidity(
     env: &Env,
     router: &Address,
@@ -49,18 +37,37 @@ pub fn remove_liquidity(
     lp_amount: i128,
     to: &Address,
 ) -> i128 {
-    let _: Vec<soroban_sdk::Val> = env.invoke_contract(
+    let recovered: i128 = env.invoke_contract(
         router,
-        &soroban_sdk::symbol_short!("rem_liq"),
+        &symbol_short!("rem_liq"),
         soroban_sdk::vec![
             env,
-            soroban_sdk::IntoVal::into_val(token_a, env),
-            soroban_sdk::IntoVal::into_val(token_b, env),
-            soroban_sdk::IntoVal::into_val(&lp_amount, env),
-            soroban_sdk::IntoVal::into_val(to, env),
+            token_a.into_val(env),
+            token_b.into_val(env),
+            lp_amount.into_val(env),
+            to.into_val(env),
         ],
     );
+    recovered
+}
 
-    // Return the amount we get back (lp_amount as proxy for principal)
-    lp_amount
+/// Query the Soroswap router for the current value of this contract's position.
+/// Calls `get_pos` on the router, which returns the token_a-equivalent value.
+pub fn get_position_value(
+    env: &Env,
+    router: &Address,
+    token_a: &Address,
+    token_b: &Address,
+    account: &Address,
+) -> i128 {
+    env.invoke_contract(
+        router,
+        &symbol_short!("get_pos"),
+        soroban_sdk::vec![
+            env,
+            token_a.into_val(env),
+            token_b.into_val(env),
+            account.into_val(env),
+        ],
+    )
 }

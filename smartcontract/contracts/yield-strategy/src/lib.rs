@@ -2,6 +2,9 @@
 
 mod events;
 mod types;
+mod soroswap;
+#[path = "stellar-amm.rs"]
+mod stellar_amm;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 use types::{DataKey, StrategyConfig, StrategyType};
@@ -24,8 +27,9 @@ impl YieldStrategy {
         env.storage().persistent().set(&DataKey::TotalHarvested, &0i128);
     }
 
-    /// Deploy `amount` of the pool token into the DeFi protocol.
-    /// Called by the flexible pool (admin) after receiving deposits.
+    /// Deploy `amount` into the DeFi protocol via the configured strategy.
+    /// Caller (flexible pool) must have already transferred `amount` tokens
+    /// into this contract before invoking — funds flow: pool → this contract → protocol.
     pub fn deploy(env: Env, amount: i128) {
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -34,27 +38,27 @@ impl YieldStrategy {
         let token: Address = env.storage().persistent().get(&DataKey::Token).unwrap();
         let config: StrategyConfig = env.storage().persistent().get(&DataKey::Strategy).unwrap();
 
-        // Transfer tokens from admin (flexible pool) into strategy contract
-        token::Client::new(&env, &token).transfer(
-            &admin,
-            &env.current_contract_address(),
-            &amount,
-        );
-
+        // Funds are already in this contract (transferred by flexible pool before this call).
+        // Route them into the configured protocol — funds leave this contract here.
         match config.strategy_type {
             StrategyType::Soroswap => {
-                // Add one-sided liquidity; paired_token amount = 0 (single-asset deposit)
-                token::Client::new(&env, &token).transfer(
-                    &env.current_contract_address(),
+                soroswap::add_liquidity(
+                    &env,
                     &config.router,
-                    &amount,
+                    &token,
+                    &config.paired_token,
+                    amount,
+                    0,
+                    &env.current_contract_address(),
                 );
             }
             StrategyType::StellarAmm => {
-                token::Client::new(&env, &token).transfer(
-                    &env.current_contract_address(),
+                stellar_amm::amm_deposit(
+                    &env,
                     &config.router,
-                    &amount,
+                    &token,
+                    amount,
+                    &env.current_contract_address(),
                 );
             }
         }
@@ -71,16 +75,67 @@ impl YieldStrategy {
         events::deployed(&env, amount);
     }
 
-    /// Harvest accumulated yield and return it to the flexible pool (admin).
-    /// `yield_amount` is provided by the admin based on protocol rewards.
-    pub fn harvest(env: Env, yield_amount: i128) -> i128 {
+    /// Harvest yield by querying the protocol for the current position value,
+    /// computing yield = current_value − deployed_principal, then withdrawing
+    /// only the yield portion back to the admin (flexible pool).
+    pub fn harvest(env: Env) -> i128 {
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
-        assert!(yield_amount > 0, "nothing to harvest");
 
         let token: Address = env.storage().persistent().get(&DataKey::Token).unwrap();
+        let config: StrategyConfig = env.storage().persistent().get(&DataKey::Strategy).unwrap();
+        let deployed: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::DeployedAmount)
+            .unwrap_or(0);
+        assert!(deployed > 0, "nothing deployed");
 
-        // Transfer yield back to admin (flexible pool)
+        // Query the protocol for the current position value of this contract
+        let current_value: i128 = match config.strategy_type {
+            StrategyType::Soroswap => soroswap::get_position_value(
+                &env,
+                &config.router,
+                &token,
+                &config.paired_token,
+                &env.current_contract_address(),
+            ),
+            StrategyType::StellarAmm => stellar_amm::get_position_value(
+                &env,
+                &config.router,
+                &token,
+                &env.current_contract_address(),
+            ),
+        };
+
+        // Yield is any value above the deployed principal
+        let yield_amount = current_value.saturating_sub(deployed);
+        assert!(yield_amount > 0, "no yield available");
+
+        // Withdraw only the yield portion from the protocol
+        match config.strategy_type {
+            StrategyType::Soroswap => {
+                soroswap::remove_liquidity(
+                    &env,
+                    &config.router,
+                    &token,
+                    &config.paired_token,
+                    yield_amount,
+                    &env.current_contract_address(),
+                );
+            }
+            StrategyType::StellarAmm => {
+                stellar_amm::amm_withdraw(
+                    &env,
+                    &config.router,
+                    &token,
+                    yield_amount,
+                    &env.current_contract_address(),
+                );
+            }
+        }
+
+        // Forward yield to admin (flexible pool) for distribution
         token::Client::new(&env, &token).transfer(
             &env.current_contract_address(),
             &admin,
@@ -100,7 +155,8 @@ impl YieldStrategy {
         yield_amount
     }
 
-    /// Emergency: pull all deployed funds back to admin.
+    /// Emergency: withdraw all deployed funds from the protocol back to admin.
+    /// Calls the protocol's withdraw/remove_liquidity with the full deployed amount.
     pub fn emergency_withdraw(env: Env) -> i128 {
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -113,6 +169,32 @@ impl YieldStrategy {
         assert!(deployed > 0, "nothing deployed");
 
         let token: Address = env.storage().persistent().get(&DataKey::Token).unwrap();
+        let config: StrategyConfig = env.storage().persistent().get(&DataKey::Strategy).unwrap();
+
+        // Withdraw full position from the protocol back to this contract
+        match config.strategy_type {
+            StrategyType::Soroswap => {
+                soroswap::remove_liquidity(
+                    &env,
+                    &config.router,
+                    &token,
+                    &config.paired_token,
+                    deployed,
+                    &env.current_contract_address(),
+                );
+            }
+            StrategyType::StellarAmm => {
+                stellar_amm::amm_withdraw(
+                    &env,
+                    &config.router,
+                    &token,
+                    deployed,
+                    &env.current_contract_address(),
+                );
+            }
+        }
+
+        // Forward recovered funds to admin
         token::Client::new(&env, &token).transfer(
             &env.current_contract_address(),
             &admin,
