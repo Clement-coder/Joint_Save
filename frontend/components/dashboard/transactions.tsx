@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowUpRight, ArrowDownLeft, Clock, Loader2 } from "lucide-react"
 import { useState, useEffect } from "react"
 import { supabase } from "@/lib/supabase"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
+import { formatRelativeTime, formatExactDateTime } from "@/lib/utils"
 
 interface Activity {
   id: string
@@ -83,9 +85,18 @@ export function Transactions() {
                       </Badge>
                     </div>
                     <p className="text-sm text-muted-foreground">{activity.description}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {new Date(activity.created_at).toLocaleDateString()}
-                    </p>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <time
+                          dateTime={activity.created_at}
+                          className="text-xs text-muted-foreground mt-1 cursor-default block"
+                          tabIndex={0}
+                        >
+                          {formatRelativeTime(activity.created_at)}
+                        </time>
+                      </TooltipTrigger>
+                      <TooltipContent>{formatExactDateTime(activity.created_at)}</TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
                 <div className="text-right">
