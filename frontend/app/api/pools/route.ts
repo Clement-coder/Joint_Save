@@ -85,6 +85,7 @@ export async function GET(req: NextRequest) {
   try {
     const poolId = req.nextUrl.searchParams.get('id')
     const creatorAddress = req.nextUrl.searchParams.get('creator')
+    const contractAddress = req.nextUrl.searchParams.get('contract')
 
     if (poolId) {
       // Fetch single pool by ID
@@ -109,6 +110,39 @@ export async function GET(req: NextRequest) {
           )
         `)
         .eq('id', poolId)
+        .single()
+
+      if (error) {
+        return NextResponse.json(
+          { error: 'Pool not found' },
+          { status: 404 }
+        )
+      }
+
+      return NextResponse.json(data)
+    } else if (contractAddress) {
+      // Fetch single pool by contract address
+      const { data, error } = await supabase
+        .from('pools')
+        .select(`
+          *,
+          pool_members (
+            id,
+            member_address,
+            contribution_amount,
+            status
+          ),
+          pool_activity (
+            id,
+            activity_type,
+            user_address,
+            amount,
+            description,
+            created_at,
+            tx_hash
+          )
+        `)
+        .eq('contract_address', contractAddress)
         .single()
 
       if (error) {

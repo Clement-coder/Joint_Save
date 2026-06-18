@@ -4,6 +4,7 @@ members = [
     "contracts/rotational",
     "contracts/target",
     "contracts/flexible",
+    "contracts/yield-strategy",
 ]
 resolver = "2"
 

@@ -75,50 +75,50 @@ export function Header() {
 
           <div className="flex items-center gap-4">
             <ThemeToggle />
-            {address && (
-              <Button variant="ghost" asChild className="hidden sm:flex">
-                <Link href="/dashboard">Dashboard</Link>
-              </Button>
-            )}
             {address ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="gap-2">
-                    <span>{truncatedAddress}</span>
-                    <ChevronDown className="h-4 w-4 opacity-60" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem className="cursor-default font-mono text-xs">
-                    {address}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleCopyAddress}>
-                    {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
-                    {copied ? "Copied" : "Copy Address"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <a
-                      href={explorerUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex w-full cursor-pointer items-center"
+              <>
+                <Button variant="ghost" asChild className="hidden sm:flex">
+                  <Link href="/dashboard">Dashboard</Link>
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2">
+                      <span>{truncatedAddress}</span>
+                      <ChevronDown className="h-4 w-4 opacity-60" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem className="cursor-default font-mono text-xs">
+                      {address}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleCopyAddress}>
+                      {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                      {copied ? "Copied" : "Copy Address"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <a
+                        href={explorerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex w-full cursor-pointer items-center"
+                      >
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        View on Explorer
+                      </a>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={handleDisconnect}
+                      variant="destructive"
                     >
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      View on Explorer
-                    </a>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={handleDisconnect}
-                    variant="destructive"
-                  >
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Disconnect Wallet
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Disconnect Wallet
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+             ) : (
               <Button onClick={connect} className="bg-primary hover:bg-primary/90">
                 Connect Wallet
               </Button>

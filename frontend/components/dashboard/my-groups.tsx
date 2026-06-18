@@ -8,12 +8,15 @@ import Link from "next/link"
 import { motion } from "framer-motion"
 import { useState, useEffect } from "react"
 import { useStellar } from "@/components/web3-provider"
+import { usePoolData } from "@/lib/data-layer/PoolDataProvider"
 import {
-  fetchRotationalState,
-  fetchTargetState,
-  fetchFlexibleState,
   stroopsToXlm,
+  RotationalPoolState,
+  TargetPoolState,
+  FlexiblePoolState,
 } from "@/hooks/useJointSaveContracts"
+import { EmptyState } from "@/components/dashboard/empty-state"
+import { FirstPoolTooltip } from "@/components/dashboard/first-pool-tooltip"
 
 interface Pool {
   id: string
@@ -31,12 +34,6 @@ interface Pool {
   minimum_deposit: number | null
 }
 
-interface PoolWithLive extends Pool {
-  liveTotalSaved?: number
-  liveProgress?: number
-  progressLabel?: string
-}
-
 interface MyGroupsProps {
   onCreateClick?: () => void
 }
@@ -44,59 +41,144 @@ interface MyGroupsProps {
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } }
 const item = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } }
 
-async function fetchLiveBalance(pool: Pool): Promise<{ totalSaved: number; progress: number; progressLabel: string }> {
-  const isPending = !pool.contract_address || pool.contract_address === "pending_deployment"
-  if (isPending) return { totalSaved: 0, progress: 0, progressLabel: "Pending deployment" }
+// ── Per-pool card that hydrates live balances from the unified cache ──────────
+function PoolCard({ pool }: { pool: Pool }) {
+  // Use contract address as cache key for deployed pools, fallback to DB id
+  const cacheKey =
+    pool.contract_address && pool.contract_address !== "pending_deployment"
+      ? pool.contract_address
+      : pool.id
 
-  try {
-    if (pool.type === "rotational") {
-      const state = await fetchRotationalState(pool.contract_address)
-      const totalMembers = state.members.length || pool.members_count || 1
-      // Progress = rounds completed / total rounds (one round per member)
-      const progress = Math.min(100, Math.round((state.currentRound / totalMembers) * 100))
-      // Total saved = rounds completed × contribution per member × members
+  const { data, isLoading } = usePoolData(cacheKey)
+
+  // Derive live stats from cache when available
+  const getLiveStats = (): { totalSaved: number; progress: number; progressLabel: string } => {
+    const onchain = data?.onchain ?? null
+
+    if (pool.type === "rotational" && onchain) {
+      const s = onchain as RotationalPoolState
+      const totalMembers = s.members.length || pool.members_count || 1
+      const progress = Math.min(100, Math.round((s.currentRound / totalMembers) * 100))
       const perRound = (pool.contribution_amount || 0) * totalMembers
-      const totalSaved = state.currentRound * perRound
+      const totalSaved = s.currentRound * perRound
       return {
         totalSaved,
         progress,
-        progressLabel: `Round ${state.currentRound + 1} of ${totalMembers}`,
+        progressLabel: `Round ${s.currentRound + 1} of ${totalMembers}`,
       }
-    } else if (pool.type === "target") {
-      const state = await fetchTargetState(pool.contract_address)
-      const saved = stroopsToXlm(state.totalDeposited)
-      const target = pool.target_amount || stroopsToXlm(state.targetAmount) || 1
+    }
+
+    if (pool.type === "target" && onchain) {
+      const s = onchain as TargetPoolState
+      const saved = stroopsToXlm(s.totalDeposited)
+      const target = pool.target_amount || stroopsToXlm(s.targetAmount) || 1
       const progress = Math.min(100, Math.round((saved / target) * 100))
       return {
         totalSaved: saved,
         progress,
         progressLabel: `${saved.toFixed(2)} / ${target.toFixed(2)} XLM`,
       }
-    } else {
-      // Flexible: progress = members who have deposited / total members
-      const state = await fetchFlexibleState(pool.contract_address)
-      const totalSaved = stroopsToXlm(state.totalBalance)
-      // Use minimum_deposit as a soft goal per member if available
+    }
+
+    if (pool.type === "flexible" && onchain) {
+      const s = onchain as FlexiblePoolState
+      const totalSaved = stroopsToXlm(s.totalBalance)
       const softGoal = (pool.minimum_deposit || 0) * (pool.members_count || 1)
-      const progress = softGoal > 0
-        ? Math.min(100, Math.round((totalSaved / softGoal) * 100))
-        : state.isActive ? 50 : 100 // active = in progress, inactive = complete
+      const progress =
+        softGoal > 0
+          ? Math.min(100, Math.round((totalSaved / softGoal) * 100))
+          : s.isActive
+          ? 50
+          : 100
       return {
         totalSaved,
         progress,
-        progressLabel: softGoal > 0
-          ? `${totalSaved.toFixed(2)} / ${softGoal.toFixed(2)} XLM`
-          : `${totalSaved.toFixed(2)} XLM saved`,
+        progressLabel:
+          softGoal > 0
+            ? `${totalSaved.toFixed(2)} / ${softGoal.toFixed(2)} XLM`
+            : `${totalSaved.toFixed(2)} XLM saved`,
       }
     }
-  } catch {
-    return { totalSaved: pool.total_saved || 0, progress: pool.progress || 0, progressLabel: "" }
+
+    // Fallback to DB data
+    return { totalSaved: pool.total_saved ?? 0, progress: pool.progress ?? 0, progressLabel: "" }
   }
+
+  const { totalSaved, progress, progressLabel } = getLiveStats()
+  const formatXlm = (n: number) => `${n.toFixed(2)} XLM`
+
+  return (
+    <motion.div variants={item}>
+      <Card className="p-6 hover:shadow-lg transition-all duration-300 hover:-translate-y-1 h-full flex flex-col">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="text-xl font-semibold mb-1">{pool.name}</h3>
+            <Badge variant="secondary">{pool.type.charAt(0).toUpperCase() + pool.type.slice(1)}</Badge>
+          </div>
+          <Badge className="bg-primary/10 text-primary hover:bg-primary/20">{pool.status}</Badge>
+        </div>
+
+        <div className="space-y-3 mb-4 flex-1">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground flex items-center gap-2">
+              <Users className="h-4 w-4" />Members
+            </span>
+            <span className="font-medium">{pool.members_count}</span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" />Total Saved
+            </span>
+            <span className="font-medium">
+              {isLoading && !data?.onchain ? (
+                <Loader2 className="h-3 w-3 animate-spin inline text-primary" />
+              ) : (
+                formatXlm(totalSaved)
+              )}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground flex items-center gap-2">
+              <Calendar className="h-4 w-4" />
+              {pool.type === "rotational" ? "Frequency" : "Status"}
+            </span>
+            <span className="font-medium">{pool.frequency || pool.status}</span>
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <span className="text-muted-foreground">Progress</span>
+            <span className="font-medium">{progress.toFixed(1)}%</span>
+          </div>
+          <div className="h-2 bg-muted rounded-full overflow-hidden">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 1, delay: 0.5 }}
+              className="h-full bg-primary"
+            />
+          </div>
+          {progressLabel && (
+            <p className="text-xs text-muted-foreground mt-1">{progressLabel}</p>
+          )}
+        </div>
+
+        <Button className="w-full bg-transparent" variant="outline" asChild>
+          <Link href={`/dashboard/group/${pool.id}`}>
+            View Details <ArrowRight className="ml-2 h-4 w-4" />
+          </Link>
+        </Button>
+      </Card>
+    </motion.div>
+  )
 }
+
+// ── Main MyGroups component ───────────────────────────────────────────────────
 
 export function MyGroups({ onCreateClick }: MyGroupsProps) {
   const { address } = useStellar()
-  const [pools, setPools] = useState<PoolWithLive[]>([])
+  const [pools, setPools] = useState<Pool[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
@@ -112,29 +194,14 @@ export function MyGroups({ onCreateClick }: MyGroupsProps) {
       const res = await fetch(`/api/pools?creator=${address?.toLowerCase()}`)
       if (!res.ok) throw new Error("Failed to fetch pools")
       const data: Pool[] = await res.json()
-      const base = Array.isArray(data) ? data : []
-
-      // Set DB data immediately so UI renders fast
-      setPools(base)
-      setLoading(false)
-
-      // Then enrich with live on-chain balances in parallel
-      const enriched = await Promise.all(
-        base.map(async (pool) => {
-          const live = await fetchLiveBalance(pool)
-          return { ...pool, liveTotalSaved: live.totalSaved, liveProgress: live.progress, progressLabel: live.progressLabel }
-        })
-      )
-      setPools(enriched)
+      setPools(Array.isArray(data) ? data : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch pools")
       setPools([])
+    } finally {
       setLoading(false)
     }
   }
-
-  const formatXlm = (amount: number | null | undefined) =>
-    amount ? `${amount.toFixed(2)} XLM` : "0 XLM"
 
   if (loading) return (
     <div className="space-y-6">
@@ -165,87 +232,17 @@ export function MyGroups({ onCreateClick }: MyGroupsProps) {
       </motion.div>
 
       {pools.length === 0 ? (
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.5 }}>
-          <Card className="p-12 text-center">
-            <div className="max-w-md mx-auto">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 mx-auto mb-4">
-                <Users className="h-8 w-8 text-primary" />
-              </div>
-              <h3 className="text-xl font-semibold mb-2">No groups yet</h3>
-              <p className="text-muted-foreground mb-6">Create your first savings group or join an existing one</p>
-              <Button className="bg-primary hover:bg-primary/90" onClick={onCreateClick}>
-                Create Your First Group
-              </Button>
-            </div>
-          </Card>
-        </motion.div>
+        <EmptyState onCreateClick={onCreateClick} />
       ) : (
-        <motion.div variants={container} initial="hidden" animate="show"
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {pools.map((pool) => {
-            const totalSaved = pool.liveTotalSaved ?? pool.total_saved ?? 0
-            const progress = pool.liveProgress ?? pool.progress ?? 0
-            return (
-              <motion.div key={pool.id} variants={item}>
-                <Card className="p-6 hover:shadow-lg transition-all duration-300 hover:-translate-y-1 h-full flex flex-col">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <h3 className="text-xl font-semibold mb-1">{pool.name}</h3>
-                      <Badge variant="secondary">{pool.type.charAt(0).toUpperCase() + pool.type.slice(1)}</Badge>
-                    </div>
-                    <Badge className="bg-primary/10 text-primary hover:bg-primary/20">{pool.status}</Badge>
-                  </div>
-
-                  <div className="space-y-3 mb-4 flex-1">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground flex items-center gap-2">
-                        <Users className="h-4 w-4" />Members
-                      </span>
-                      <span className="font-medium">{pool.members_count}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground flex items-center gap-2">
-                        <TrendingUp className="h-4 w-4" />Total Saved
-                      </span>
-                      <span className="font-medium">{formatXlm(totalSaved)}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground flex items-center gap-2">
-                        <Calendar className="h-4 w-4" />
-                        {pool.type === "rotational" ? "Frequency" : "Status"}
-                      </span>
-                      <span className="font-medium">{pool.frequency || pool.status}</span>
-                    </div>
-                  </div>
-
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between text-sm mb-2">
-                      <span className="text-muted-foreground">Progress</span>
-                      <span className="font-medium">{progress.toFixed(1)}%</span>
-                    </div>
-                    <div className="h-2 bg-muted rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${progress}%` }}
-                        transition={{ duration: 1, delay: 0.5 }}
-                        className="h-full bg-primary"
-                      />
-                    </div>
-                    {pool.progressLabel && (
-                      <p className="text-xs text-muted-foreground mt-1">{pool.progressLabel}</p>
-                    )}
-                  </div>
-
-                  <Button className="w-full bg-transparent" variant="outline" asChild>
-                    <Link href={`/dashboard/group/${pool.id}`}>
-                      View Details <ArrowRight className="ml-2 h-4 w-4" />
-                    </Link>
-                  </Button>
-                </Card>
-              </motion.div>
-            )
-          })}
-        </motion.div>
+        <>
+          <FirstPoolTooltip poolCount={pools.length} />
+          <motion.div variants={container} initial="hidden" animate="show"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {pools.map((pool) => (
+              <PoolCard key={pool.id} pool={pool} />
+            ))}
+          </motion.div>
+        </>
       )}
     </div>
   )
