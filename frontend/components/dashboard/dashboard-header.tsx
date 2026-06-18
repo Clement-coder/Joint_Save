@@ -65,6 +65,7 @@ export function DashboardHeader() {
 
           <div className="flex items-center gap-4">
             <ThemeToggle />
+
             {address ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
